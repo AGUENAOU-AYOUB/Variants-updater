@@ -1,0 +1,116 @@
+:root {
+    --brand: #ff6f61;
+    --bg: #f5f7fb;
+    --card-bg: #ffffffcc;
+    --shadow: 0 4px 14px rgba(0, 0, 0, .08);
+    --radius: 12px;
+    --trans: .25s cubic-bezier(.4, 0, .2, 1);
+}
+
+body {
+    background: var(--bg);
+    font-family: "Inter", system-ui, sans-serif
+}
+
+/* NAVBAR */
+.navbar {
+    backdrop-filter: blur(12px);
+    background: rgba(255, 255, 255, .6) !important;
+    box-shadow: var(--shadow);
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.navbar .navbar-brand {
+    font-weight: 600;
+    color: var(--brand) !important
+}
+
+#run.btn {
+    --bs-btn-bg: var(--brand);
+    --bs-btn-border-color: var(--brand);
+    --bs-btn-hover-bg: color-mix(in srgb, var(--brand) 85%, black);
+}
+
+/* TOASTS */
+.toast {
+    box-shadow: var(--shadow);
+    border-radius: var(--radius)
+}
+
+.toast-body {
+    font-weight: 500
+}
+
+/* TABLES */
+.table {
+    background: var(--card-bg);
+    backdrop-filter: blur(8px);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow)
+}
+
+.table tr:hover {
+    background: rgba(0, 0, 0, .025)
+}
+
+.table td {
+    padding: .6rem .9rem;
+    font-size: .95rem
+}
+
+/* BUTTONS */
+.btn-success {
+    --bs-btn-bg: var(--brand);
+    --bs-btn-border-color: var(--brand);
+    font-weight: 500;
+    transition: var(--trans)
+}
+
+.btn-success:hover {
+    filter: brightness(.9)
+}
+
+/* LOADER */
+.loader {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: var(--bg);
+    z-index: 1056;
+    transition: opacity .4s ease, visibility .4s
+}
+
+.loader.hide {
+    opacity: 0;
+    visibility: hidden
+}
+
+.spinner-border {
+    width: 3rem;
+    height: 3rem;
+    border-width: .4rem;
+    border-color: #dee2e6;
+    border-right-color: var(--brand)
+}
+
+/* PRE LOG BOX */
+pre#logs,
+pre#logbox {
+    border: 1px solid #2d313a;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow)
+}
+
+/* mobile */
+@media (max-width:576px) {
+    .navbar .navbar-brand {
+        font-size: 1.1rem
+    }
+
+    #run.btn {
+        padding: .3rem .7rem;
+        font-size: .85rem
+    }
+}

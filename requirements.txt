@@ -1,0 +1,4 @@
+Flask>=3
+requests>=2
+python-dotenv>=1
+gunicorn>=21
