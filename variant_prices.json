@@ -1,20 +1,20 @@
 {
-    "bracelet": {
-        "Forsat S": 0.0,
-        "Forsat M": 190.0,
-        "Forsat L": 290.0,
-        "Gourmette S": 290.0,
-        "Chopard S": 390.0,
-        "Gourmette M": 550.0,
-        "Chopard M": 750.0
-    },
-    "collier": {
-        "Forsat S": 0.0,
-        "Forsat M": 350.0,
-        "Forsat L": 790.0,
-        "Gourmette S": 790.0,
-        "Chopard S": 990.0,
-        "Gourmette M": 1290.0,
-        "Chopard M": 1890.0
-    }
+  "bracelet": {
+    "Forsat S": 100.0,
+    "Forsat M": 190.0,
+    "Forsat L": 290.0,
+    "Gourmette S": 290.0,
+    "Chopard S": 390.0,
+    "Gourmette M": 550.0,
+    "Chopard M": 750.0
+  },
+  "collier": {
+    "Forsat S": 0.0,
+    "Forsat M": 350.0,
+    "Forsat L": 790.0,
+    "Gourmette S": 790.0,
+    "Chopard S": 990.0,
+    "Gourmette M": 1290.0,
+    "Chopard M": 1890.0
+  }
 }

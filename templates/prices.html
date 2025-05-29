@@ -2,11 +2,11 @@
 {% block content %}
 <h2>Variant surcharge table</h2>
 <form method="post" class="mt-3">
-    {% for cat, rows in prices.items() %}
+    {% for cat,rows in prices.items() %}
     <h4 class="mt-4 text-capitalize">{{ cat }}</h4>
     <div class="table-responsive">
         <table class="table align-middle">
-            {% for name, price in rows.items() %}
+            {% for name,price in rows.items() %}
             <tr>
                 <td class="w-50">{{ name }}</td>
                 <td class="w-25">
@@ -22,5 +22,5 @@
 </form>
 
 <h4 class="mt-5">Live logs</h4>
-<pre id="logs" class="bg-black text-white p-3 rounded small" style="height:240px; overflow:auto"></pre>
+<pre id="logs" class="bg-black text-white p-3 rounded small" style="height:240px;overflow:auto;"></pre>
 {% endblock %}

@@ -9,10 +9,10 @@
 
 body {
     background: var(--bg);
-    font-family: "Inter", system-ui, sans-serif
+    font-family: "Inter", sans-serif
 }
 
-/* NAVBAR */
+/* Navbar */
 .navbar {
     backdrop-filter: blur(12px);
     background: rgba(255, 255, 255, .6) !important;
@@ -21,17 +21,16 @@ body {
 }
 
 .navbar .navbar-brand {
-    font-weight: 600;
-    color: var(--brand) !important
+    color: var(--brand) !important;
+    font-weight: 600
 }
 
 #run.btn {
     --bs-btn-bg: var(--brand);
     --bs-btn-border-color: var(--brand);
-    --bs-btn-hover-bg: color-mix(in srgb, var(--brand) 85%, black);
 }
 
-/* TOASTS */
+/* Toasts */
 .toast {
     box-shadow: var(--shadow);
     border-radius: var(--radius)
@@ -41,12 +40,12 @@ body {
     font-weight: 500
 }
 
-/* TABLES */
+/* Tables */
 .table {
     background: var(--card-bg);
     backdrop-filter: blur(8px);
     border-radius: var(--radius);
-    box-shadow: var(--shadow)
+    box-shadow: var(--shadow);
 }
 
 .table tr:hover {
@@ -58,28 +57,28 @@ body {
     font-size: .95rem
 }
 
-/* BUTTONS */
+/* Buttons */
 .btn-success {
     --bs-btn-bg: var(--brand);
     --bs-btn-border-color: var(--brand);
-    font-weight: 500;
-    transition: var(--trans)
+    transition: var(--trans);
 }
 
 .btn-success:hover {
     filter: brightness(.9)
 }
 
-/* LOADER */
+/* Loader */
 .loader {
     position: fixed;
     inset: 0;
     display: flex;
+    flex-direction: column;
     justify-content: center;
     align-items: center;
     background: var(--bg);
     z-index: 1056;
-    transition: opacity .4s ease, visibility .4s
+    transition: opacity .4s, visibility .4s;
 }
 
 .loader.hide {
@@ -92,18 +91,9 @@ body {
     height: 3rem;
     border-width: .4rem;
     border-color: #dee2e6;
-    border-right-color: var(--brand)
+    border-right-color: var(--brand);
 }
 
-/* PRE LOG BOX */
-pre#logs,
-pre#logbox {
-    border: 1px solid #2d313a;
-    border-radius: var(--radius);
-    box-shadow: var(--shadow)
-}
-
-/* mobile */
 @media (max-width:576px) {
     .navbar .navbar-brand {
         font-size: 1.1rem

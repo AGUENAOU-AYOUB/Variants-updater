@@ -1,15 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
 <h2 class="mb-3">Live worker logs</h2>
-<pre id="logbox" class="bg-black text-white p-3 rounded small"
-    style="height:420px; overflow:auto; box-shadow:var(--shadow);"></pre>
-<a href="{{ url_for('prices') }}" class="btn btn-outline-secondary mt-3">
-    ← Back to surcharge table
-</a>
+<pre id="logbox" class="bg-black text-white p-3 rounded small" style="height:420px;overflow:auto;"></pre>
+<a href="{{ url_for('prices') }}" class="btn btn-outline-secondary mt-3">← Back</a>
 <script>
-    const box = document.getElementById('logbox');
-    new EventSource('/stream').onmessage = e => {
-        box.textContent += e.data + '\n';
+    const box = document.getElementById("logbox");
+    const es = new EventSource("/stream");
+    es.onmessage = e => {
+        box.textContent += e.data + "\n";
         box.scrollTop = box.scrollHeight;
     };
 </script>

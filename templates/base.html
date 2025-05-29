@@ -12,12 +12,16 @@
 <body>
     <nav class="navbar navbar-dark bg-dark px-3">
         <span class="navbar-brand mb-0 h1">Price Dash</span>
+        <!-- HTML form fallback: -->
+        <!-- <form action="{{ url_for('update') }}" method="post" class="d-inline">
+    <button type="submit" class="btn btn-primary">Update Shopify</button>
+  </form> -->
         <button id="run" class="btn btn-primary">Update Shopify</button>
     </nav>
 
     <main class="container my-4">
-        {% with msgs = get_flashed_messages(with_categories=True) %}
-        {% for cat, msg in msgs %}
+        {% with msgs=get_flashed_messages(with_categories=True) %}
+        {% for cat,msg in msgs %}
         <div class="toast text-bg-{{ 'success' if cat=='success' else 'info' }}" role="alert" data-bs-delay="5000">
             <div class="d-flex">
                 <div class="toast-body">{{ msg }}</div>
@@ -30,7 +34,6 @@
         {% block content %}{% endblock %}
     </main>
 
-    <!-- Loader -->
     <div id="loader" class="loader d-flex flex-column">
         <div class="spinner-border text-primary" role="status"></div>
         <p class="mt-3">Waking server…</p>
