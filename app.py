@@ -97,11 +97,12 @@ def fetch_products_graphql() -> list[dict]:
           node {
             id
             tags
-            metafields(first: 1, namespace: "custom", key: "base_price") {
-              edges { node { value } }
+            # fetch all custom namespace metafields, then filter in code
+            metafields(first: 10, namespace: "custom") {
+              edges { node { key value } }
             }
             variants(first: 100) {
-              edges { node { adminGraphqlApiId title } }
+              edges { node { id title } }
             }
           }
         }
@@ -118,7 +119,7 @@ def fetch_products_graphql() -> list[dict]:
         cursor = data["pageInfo"]["endCursor"]
 
     _log(f"Fetched {len(products)} products via GraphQL")
-    # debug first few products so we can see tags/metafields
+    # debug first few products
     for p in products[:3]:
         _log(f"DEBUG: product {p['id']} tags={p['tags']} metafields={p['metafields']['edges']}")
     return products
@@ -207,6 +208,7 @@ def worker():
         variant_map: dict[str,float] = {}
 
         for p in products:
+            # category by tag
             if "bracelet" in p["tags"]:
                 cat = "bracelet"
             elif "collier" in p["tags"]:
@@ -215,16 +217,20 @@ def worker():
                 _log(f"DEBUG: skipping {p['id']}—no bracelet/collier tag")
                 continue
 
-            mf_edges = p["metafields"]["edges"]
-            if not mf_edges:
-                _log(f"DEBUG: skipping {p['id']}—no custom::base_price metafield")
+            # find base_price metafield
+            base = None
+            for mf in p["metafields"]["edges"]:
+                if mf["node"]["key"] == "base_price":
+                    base = float(mf["node"]["value"])
+                    break
+            if base is None:
+                _log(f"DEBUG: skipping {p['id']}—no custom.base_price metafield")
                 continue
-            base = float(mf_edges[0]["node"]["value"])
 
             for v_edge in p["variants"]["edges"]:
                 v = v_edge["node"]
-                surcharge = float(prices.get(cat,{}).get(v["title"].strip(),0))
-                variant_map[v["adminGraphqlApiId"]] = round(base+surcharge,2)
+                surcharge = float(prices.get(cat, {}).get(v["title"].strip(), 0))
+                variant_map[v["id"]] = round(base + surcharge, 2)
 
         if variant_map:
             bulk_update(variant_map)
