@@ -97,7 +97,6 @@ def fetch_products_graphql() -> list[dict]:
           node {
             id
             tags
-            # fetch all custom namespace metafields, then filter in code
             metafields(first: 10, namespace: "custom") {
               edges { node { key value } }
             }
@@ -119,7 +118,6 @@ def fetch_products_graphql() -> list[dict]:
         cursor = data["pageInfo"]["endCursor"]
 
     _log(f"Fetched {len(products)} products via GraphQL")
-    # debug first few products
     for p in products[:3]:
         _log(f"DEBUG: product {p['id']} tags={p['tags']} metafields={p['metafields']['edges']}")
     return products
@@ -144,12 +142,16 @@ def staged_upload(jsonl_path: Path) -> str:
         """
     mutation($input:[StagedUploadInput!]!){
       stagedUploadsCreate(input:$input){
-        stagedTargets { url resourceUrl parameters }
-        userErrors     { field message }
+        stagedTargets {
+          url
+          resourceUrl
+          parameters { name value }
+        }
+        userErrors { field message }
       }
     }
     """,
-        {"input":[{
+        {"input": [{
             "resource":   "BULK_MUTATION_VARIABLES",
             "filename":   jsonl_path.name,
             "mimeType":   "text/jsonl",
@@ -166,7 +168,7 @@ def staged_upload(jsonl_path: Path) -> str:
             tgt["url"],
             params={p["name"]: p["value"] for p in tgt["parameters"]},
             data=fh,
-            headers={"Content-Type":"text/jsonl"},
+            headers={"Content-Type": "text/jsonl"},
             timeout=120,
         ).raise_for_status()
     return tgt["resourceUrl"]
@@ -175,7 +177,7 @@ def bulk_update(variant_map: dict[str, float]):
     _log(f"Preparing {len(variant_map)} variants…")
     with tempfile.NamedTemporaryFile(delete=False, suffix=".jsonl") as tmp:
         for vid, price in variant_map.items():
-            tmp.write(json.dumps({"input":{"id":vid,"price":str(price)}}).encode()+b"\n")
+            tmp.write(json.dumps({"input": {"id": vid, "price": str(price)}}).encode() + b"\n")
         tmp_path = Path(tmp.name)
 
     res_url = staged_upload(tmp_path)
@@ -189,7 +191,7 @@ def bulk_update(variant_map: dict[str, float]):
     while True:
         stat = gql("{ currentBulkOperation { id status errorCode objectCount } }")["currentBulkOperation"]
         _log(f"Bulk {op_id} → {stat['status']}")
-        if stat["status"] in ("COMPLETED","FAILED","CANCELED"):
+        if stat["status"] in ("COMPLETED", "FAILED", "CANCELED"):
             break
         time.sleep(4)
 
@@ -205,7 +207,7 @@ def worker():
         products = fetch_products_graphql()
         _log(f"DEBUG: total products in worker = {len(products)}")
         prices = load_prices()
-        variant_map: dict[str,float] = {}
+        variant_map: dict[str, float] = {}
 
         for p in products:
             # category by tag
@@ -217,7 +219,7 @@ def worker():
                 _log(f"DEBUG: skipping {p['id']}—no bracelet/collier tag")
                 continue
 
-            # find base_price metafield
+            # find base_price
             base = None
             for mf in p["metafields"]["edges"]:
                 if mf["node"]["key"] == "base_price":
@@ -243,7 +245,7 @@ def worker():
 # ─── ROUTES & SSE ─────────────────────────────────────
 @app.get("/__ping")
 def ping():
-    return "OK",200
+    return "OK", 200
 
 @app.route("/stream")
 def stream():
@@ -254,27 +256,27 @@ def stream():
             yield f"data:{_log_q.get()}\n\n"
     return Response(gen(), mimetype="text/event-stream")
 
-@app.route("/", methods=["GET","POST"])
+@app.route("/", methods=["GET", "POST"])
 def prices():
     data = load_prices()
-    if request.method=="POST":
+    if request.method == "POST":
         for cat in data:
             for name in data[cat]:
                 f = f"{cat}_{name}"
                 if f in request.form:
                     data[cat][name] = float(request.form[f])
         save_prices(data)
-        flash("Surcharges saved ✔","success")
+        flash("Surcharges saved ✔", "success")
     return render_template("prices.html", prices=data)
 
 @app.post("/update")
 def update():
     _log("👋 /update called – launching worker")
     threading.Thread(target=worker, daemon=True).start()
-    flash("Bulk update started — watch logs","info")
+    flash("Bulk update started — watch logs", "info")
     return redirect(url_for("prices"))
 
-if __name__=="__main__":
+if __name__ == "__main__":
     if not is_running_from_reloader():
         _log("Dev server ready at http://127.0.0.1:5000")
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT",5000)))
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
