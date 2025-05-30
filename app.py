@@ -1,27 +1,39 @@
 """
-Shopify Variant-Price Dashboard
-• Flask 3  • Bulk GraphQL via stagedUploadsCreate
-• Live SSE logs  • Bootstrap UI
+shopify-price-dash/app.py
+Flask dashboard + Shopify bulk price updater using GraphQL + live SSE logs.
 """
 
-import json, os, queue, tempfile, threading, time
-from pathlib import Path
+import json
+import os
+import queue
+import tempfile
+import threading
+import time
 from collections import deque
+from pathlib import Path
 from typing import Any
 
 import requests
 from dotenv import load_dotenv
-from flask import Flask, Response, flash, redirect, render_template, request, url_for
+from flask import (
+    Flask,
+    Response,
+    flash,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
 from werkzeug.serving import is_running_from_reloader
 
-# ─── CONFIG ──────────────────────────────────────
+# ─── CONFIG ───────────────────────────────────────────
 load_dotenv()  # loads .env in dev or ENV vars in prod
 
-SHOP_DOMAIN = os.getenv("SHOP_DOMAIN")
-API_TOKEN   = os.getenv("API_TOKEN")
-FLASK_SECRET= os.getenv("FLASK_SECRET", "change-me")
-API_VERSION = "2024-04"
-GRAPHQL_URL = f"https://{SHOP_DOMAIN}/admin/api/{API_VERSION}/graphql.json"
+SHOP_DOMAIN  = os.getenv("SHOP_DOMAIN")
+API_TOKEN    = os.getenv("API_TOKEN")
+FLASK_SECRET = os.getenv("FLASK_SECRET", "change-me")
+API_VERSION  = "2024-04"
+GRAPHQL_URL  = f"https://{SHOP_DOMAIN}/admin/api/{API_VERSION}/graphql.json"
 
 if not SHOP_DOMAIN or not API_TOKEN:
     raise RuntimeError("Set SHOP_DOMAIN and API_TOKEN in env!")
@@ -33,22 +45,22 @@ HEADERS_GQL = {
 
 SURCHARGE_FILE = "variant_prices.json"
 
-
-# ─── FLASK SETUP ─────────────────────────────────
+# ─── FLASK SETUP ─────────────────────────────────────
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET
 
-# ring buffer + queue for SSE logs
+# ring buffer + queue for live logs (SSE)
 log_buffer: deque[str] = deque(maxlen=200)
 _log_q: "queue.SimpleQueue[str]" = queue.SimpleQueue()
 
 def _log(msg: str):
+    """Add timestamped message to buffer + SSE queue."""
     line = f"[{time.strftime('%H:%M:%S')}] {msg}"
     log_buffer.append(line)
     _log_q.put_nowait(line)
 
 
-# ─── UTILITIES ───────────────────────────────────
+# ─── UTILITIES ───────────────────────────────────────
 def load_prices() -> dict[str, Any]:
     with open(SURCHARGE_FILE, "r", encoding="utf-8") as fh:
         return json.load(fh)
@@ -71,7 +83,48 @@ def gql(query: str, variables: dict | None = None) -> dict[str, Any]:
     return j["data"]
 
 
-# ─── BULK MUTATION HELPERS ───────────────────────
+# ─── GRAPHQL FETCH ────────────────────────────────────
+def fetch_products_graphql() -> list[dict]:
+    _log("Fetching products via GraphQL…")
+    products: list[dict] = []
+    cursor = None
+
+    graphql_query = """
+    query fetchProducts($cursor: String) {
+      products(first: 250, query: "tag:CHAINE_UPDATE", after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        edges {
+          node {
+            id
+            tags
+            metafields(first: 1, namespace: "custom", key: "base_price") {
+              edges { node { value } }
+            }
+            variants(first: 100) {
+              edges { node { adminGraphqlApiId title } }
+            }
+          }
+        }
+      }
+    }
+    """
+
+    while True:
+        data = gql(graphql_query, {"cursor": cursor})["products"]
+        for edge in data["edges"]:
+            products.append(edge["node"])
+        if not data["pageInfo"]["hasNextPage"]:
+            break
+        cursor = data["pageInfo"]["endCursor"]
+
+    _log(f"Fetched {len(products)} products via GraphQL")
+    # debug first few products so we can see tags/metafields
+    for p in products[:3]:
+        _log(f"DEBUG: product {p['id']} tags={p['tags']} metafields={p['metafields']['edges']}")
+    return products
+
+
+# ─── BULK MUTATION HELPERS ────────────────────────────
 BULK_MUTATION = r"""
 mutation bulk($stagedUploadPath: String!) {
   bulkOperationRunMutation(
@@ -86,29 +139,31 @@ mutation call($input: ProductVariantInput!) {
 """
 
 def staged_upload(jsonl_path: Path) -> str:
-    data = gql(
+    resp = gql(
         """
     mutation($input:[StagedUploadInput!]!){
       stagedUploadsCreate(input:$input){
-        stagedTargets{url resourceUrl parameters}
-        userErrors{field message}
+        stagedTargets { url resourceUrl parameters }
+        userErrors     { field message }
       }
     }
     """,
-        {"input": [{
-            "resource":"BULK_MUTATION_VARIABLES",
-            "filename":jsonl_path.name,
-            "mimeType":"text/jsonl",
-            "httpMethod":"PUT",
-        }]}
+        {"input":[{
+            "resource":   "BULK_MUTATION_VARIABLES",
+            "filename":   jsonl_path.name,
+            "mimeType":   "text/jsonl",
+            "httpMethod": "PUT",
+        }]},
     )["stagedUploadsCreate"]
-    if data["userErrors"]:
-        raise RuntimeError(data["userErrors"])
-    tgt = data["stagedTargets"][0]
+
+    if resp["userErrors"]:
+        raise RuntimeError(resp["userErrors"])
+
+    tgt = resp["stagedTargets"][0]
     with open(jsonl_path, "rb") as fh:
         requests.put(
             tgt["url"],
-            params={p["name"]:p["value"] for p in tgt["parameters"]},
+            params={p["name"]: p["value"] for p in tgt["parameters"]},
             data=fh,
             headers={"Content-Type":"text/jsonl"},
             timeout=120,
@@ -125,68 +180,61 @@ def bulk_update(variant_map: dict[str, float]):
     res_url = staged_upload(tmp_path)
     _log("JSONL uploaded, launching bulk mutation…")
 
-    op = gql(BULK_MUTATION, {"stagedUploadPath":res_url})["bulkOperationRunMutation"]
+    op = gql(BULK_MUTATION, {"stagedUploadPath": res_url})["bulkOperationRunMutation"]
     if op["userErrors"]:
         raise RuntimeError(op["userErrors"])
     op_id = op["bulkOperation"]["id"]
 
     while True:
-        status = gql("{currentBulkOperation{id status errorCode objectCount}}")["currentBulkOperation"]
-        _log(f"Bulk {op_id} → {status['status']}")
-        if status["status"] in ("COMPLETED","FAILED","CANCELED"):
+        stat = gql("{ currentBulkOperation { id status errorCode objectCount } }")["currentBulkOperation"]
+        _log(f"Bulk {op_id} → {stat['status']}")
+        if stat["status"] in ("COMPLETED","FAILED","CANCELED"):
             break
         time.sleep(4)
 
-    if status["status"]=="COMPLETED":
-        _log(f"✅ Completed — {status['objectCount']} variants.")
+    if stat["status"] == "COMPLETED":
+        _log(f"✅ Completed — {stat['objectCount']} variants.")
     else:
-        _log(f"💥 Bulk failed: {status}")
+        _log(f"💥 Bulk failed: {stat}")
 
 
-# ─── BACKGROUND WORKER ───────────────────────────
+# ─── BACKGROUND WORKER ────────────────────────────────
 def worker():
     try:
-        _log("Fetching products…")
-        products, page = [], None
-        while True:
-            r = requests.get(
-                f"https://{SHOP_DOMAIN}/admin/api/{API_VERSION}/products.json",
-                headers={"X-Shopify-Access-Token":API_TOKEN},
-                params={"limit":250,**({"page_info":page} if page else {})},
-                timeout=45,
-            )
-            r.raise_for_status()
-            products += r.json()["products"]
-            page = (r.links.get("next",{}).get("url","").split("page_info=")[-1] or None)
-            if not page: break
-
+        products = fetch_products_graphql()
+        _log(f"DEBUG: total products in worker = {len(products)}")
         prices = load_prices()
-        vmap: dict[str,float] = {}
+        variant_map: dict[str,float] = {}
+
         for p in products:
-            if "CHAINE_UPDATE" not in p["tags"]:
+            if "bracelet" in p["tags"]:
+                cat = "bracelet"
+            elif "collier" in p["tags"]:
+                cat = "collier"
+            else:
+                _log(f"DEBUG: skipping {p['id']}—no bracelet/collier tag")
                 continue
-            cat = ("bracelet" if "bracelet" in p["tags"]
-                   else "collier" if "collier" in p["tags"]
-                   else None)
-            if not cat: continue
-            base = next(
-                (float(m["value"]) for m in p.get("metafields",[])
-                 if m["namespace"]=="custom" and m["key"]=="base_price"), None)
-            if base is None: continue
 
-            for v in p["variants"]:
+            mf_edges = p["metafields"]["edges"]
+            if not mf_edges:
+                _log(f"DEBUG: skipping {p['id']}—no custom::base_price metafield")
+                continue
+            base = float(mf_edges[0]["node"]["value"])
+
+            for v_edge in p["variants"]["edges"]:
+                v = v_edge["node"]
                 surcharge = float(prices.get(cat,{}).get(v["title"].strip(),0))
-                vmap[v["admin_graphql_api_id"]] = round(base+surcharge,2)
+                variant_map[v["adminGraphqlApiId"]] = round(base+surcharge,2)
 
-        if vmap:
-            bulk_update(vmap)
+        if variant_map:
+            bulk_update(variant_map)
         else:
             _log("Nothing to update.")
     except Exception as e:
         _log(f"💥 Worker crashed: {e}")
 
 
-# ─── ROUTES & SSE ────────────────────────────────
+# ─── ROUTES & SSE ─────────────────────────────────────
 @app.get("/__ping")
 def ping():
     return "OK",200
@@ -194,10 +242,8 @@ def ping():
 @app.route("/stream")
 def stream():
     def gen():
-        # replay buffer
         for l in list(log_buffer):
             yield f"data:{l}\n\n"
-        # then live
         while True:
             yield f"data:{_log_q.get()}\n\n"
     return Response(gen(), mimetype="text/event-stream")
@@ -208,9 +254,9 @@ def prices():
     if request.method=="POST":
         for cat in data:
             for name in data[cat]:
-                field=f"{cat}_{name}"
-                if field in request.form:
-                    data[cat][name]=float(request.form[field])
+                f = f"{cat}_{name}"
+                if f in request.form:
+                    data[cat][name] = float(request.form[f])
         save_prices(data)
         flash("Surcharges saved ✔","success")
     return render_template("prices.html", prices=data)
