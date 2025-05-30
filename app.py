@@ -1,6 +1,8 @@
 """
 shopify-price-dash/app.py
 Flask dashboard + Shopify bulk price updater using GraphQL + live SSE logs.
+Simplified to fetch only CHAINE_UPDATE products, pick collier or bracelet prices,
+and fixed staged upload (no extra headers on PUT).
 """
 
 import json
@@ -15,20 +17,11 @@ from typing import Any
 
 import requests
 from dotenv import load_dotenv
-from flask import (
-    Flask,
-    Response,
-    flash,
-    redirect,
-    render_template,
-    request,
-    url_for,
-)
+from flask import Flask, Response, flash, redirect, render_template, request, url_for
 from werkzeug.serving import is_running_from_reloader
 
 # ─── CONFIG ───────────────────────────────────────────
-load_dotenv()  # loads .env in dev or ENV vars in prod
-
+load_dotenv()
 SHOP_DOMAIN  = os.getenv("SHOP_DOMAIN")
 API_TOKEN    = os.getenv("API_TOKEN")
 FLASK_SECRET = os.getenv("FLASK_SECRET", "change-me")
@@ -42,25 +35,22 @@ HEADERS_GQL = {
     "X-Shopify-Access-Token": API_TOKEN,
     "Content-Type": "application/json",
 }
-
 SURCHARGE_FILE = "variant_prices.json"
 
 # ─── FLASK SETUP ─────────────────────────────────────
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET
 
-# ring buffer + queue for live logs (SSE)
 log_buffer: deque[str] = deque(maxlen=200)
 _log_q: "queue.SimpleQueue[str]" = queue.SimpleQueue()
 
 def _log(msg: str):
-    """Add timestamped message to buffer + SSE queue."""
     line = f"[{time.strftime('%H:%M:%S')}] {msg}"
     log_buffer.append(line)
     _log_q.put_nowait(line)
 
 
-# ─── UTILITIES ───────────────────────────────────────
+# ─── UTILS ────────────────────────────────────────────
 def load_prices() -> dict[str, Any]:
     with open(SURCHARGE_FILE, "r", encoding="utf-8") as fh:
         return json.load(fh)
@@ -70,12 +60,7 @@ def save_prices(data: dict[str, Any]):
         json.dump(data, fh, ensure_ascii=False, indent=2)
 
 def gql(query: str, variables: dict | None = None) -> dict[str, Any]:
-    r = requests.post(
-        GRAPHQL_URL,
-        headers=HEADERS_GQL,
-        json={"query": query, "variables": variables or {}},
-        timeout=60,
-    )
+    r = requests.post(GRAPHQL_URL, headers=HEADERS_GQL, json={"query": query, "variables": variables or {}}, timeout=60)
     r.raise_for_status()
     j = r.json()
     if j.get("errors"):
@@ -83,32 +68,28 @@ def gql(query: str, variables: dict | None = None) -> dict[str, Any]:
     return j["data"]
 
 
-# ─── GRAPHQL FETCH ────────────────────────────────────
+# ─── FETCH CHAINE_UPDATE PRODUCTS ─────────────────────
 def fetch_products_graphql() -> list[dict]:
     _log("Fetching products via GraphQL…")
     products: list[dict] = []
     cursor = None
-
     graphql_query = """
     query fetchProducts($cursor: String) {
       products(first: 250, query: "tag:CHAINE_UPDATE", after: $cursor) {
         pageInfo { hasNextPage endCursor }
-        edges {
-          node {
-            id
-            tags
-            metafields(first: 10, namespace: "custom") {
-              edges { node { key value } }
-            }
-            variants(first: 100) {
-              edges { node { id title } }
-            }
+        edges { node {
+          id
+          tags
+          metafields(first: 10, namespace: "custom") {
+            edges { node { key value } }
           }
-        }
+          variants(first: 100) {
+            edges { node { id title } }
+          }
+        }}
       }
     }
     """
-
     while True:
         data = gql(graphql_query, {"cursor": cursor})["products"]
         for edge in data["edges"]:
@@ -118,8 +99,6 @@ def fetch_products_graphql() -> list[dict]:
         cursor = data["pageInfo"]["endCursor"]
 
     _log(f"Fetched {len(products)} products via GraphQL")
-    for p in products[:3]:
-        _log(f"DEBUG: product {p['id']} tags={p['tags']} metafields={p['metafields']['edges']}")
     return products
 
 
@@ -152,25 +131,19 @@ def staged_upload(jsonl_path: Path) -> str:
     }
     """,
         {"input": [{
-            "resource":   "BULK_MUTATION_VARIABLES",
-            "filename":   jsonl_path.name,
-            "mimeType":   "text/jsonl",
+            "resource": "BULK_MUTATION_VARIABLES",
+            "filename": jsonl_path.name,
+            "mimeType": "text/jsonl",
             "httpMethod": "PUT",
         }]},
     )["stagedUploadsCreate"]
-
     if resp["userErrors"]:
         raise RuntimeError(resp["userErrors"])
 
     tgt = resp["stagedTargets"][0]
+    # Do NOT send extra headers; only the signed params are allowed
     with open(jsonl_path, "rb") as fh:
-        requests.put(
-            tgt["url"],
-            params={p["name"]: p["value"] for p in tgt["parameters"]},
-            data=fh,
-            headers={"Content-Type": "text/jsonl"},
-            timeout=120,
-        ).raise_for_status()
+        requests.put(tgt["url"], params={p["name"]: p["value"] for p in tgt["parameters"]}, data=fh, timeout=120).raise_for_status()
     return tgt["resourceUrl"]
 
 def bulk_update(variant_map: dict[str, float]):
@@ -189,7 +162,7 @@ def bulk_update(variant_map: dict[str, float]):
     op_id = op["bulkOperation"]["id"]
 
     while True:
-        stat = gql("{ currentBulkOperation { id status errorCode objectCount } }")["currentBulkOperation"]
+        stat = gql("{ currentBulkOperation { status objectCount } }")["currentBulkOperation"]
         _log(f"Bulk {op_id} → {stat['status']}")
         if stat["status"] in ("COMPLETED", "FAILED", "CANCELED"):
             break
@@ -201,38 +174,37 @@ def bulk_update(variant_map: dict[str, float]):
         _log(f"💥 Bulk failed: {stat}")
 
 
-# ─── BACKGROUND WORKER ────────────────────────────────
+# ─── WORKER ──────────────────────────────────────────
 def worker():
     try:
         products = fetch_products_graphql()
-        _log(f"DEBUG: total products in worker = {len(products)}")
         prices = load_prices()
         variant_map: dict[str, float] = {}
 
         for p in products:
-            # category by tag
-            if "bracelet" in p["tags"]:
-                cat = "bracelet"
-            elif "collier" in p["tags"]:
+            # if collier tag → use collier prices, elif bracelet → bracelet
+            if "collier" in p["tags"]:
                 cat = "collier"
+            elif "bracelet" in p["tags"]:
+                cat = "bracelet"
             else:
-                _log(f"DEBUG: skipping {p['id']}—no bracelet/collier tag")
                 continue
 
-            # find base_price
+            # find base_price metafield
             base = None
             for mf in p["metafields"]["edges"]:
                 if mf["node"]["key"] == "base_price":
                     base = float(mf["node"]["value"])
                     break
             if base is None:
-                _log(f"DEBUG: skipping {p['id']}—no custom.base_price metafield")
                 continue
 
-            for v_edge in p["variants"]["edges"]:
-                v = v_edge["node"]
-                surcharge = float(prices.get(cat, {}).get(v["title"].strip(), 0))
-                variant_map[v["id"]] = round(base + surcharge, 2)
+            # build variant→new price
+            for v in p["variants"]["edges"]:
+                vid = v["node"]["id"]
+                title = v["node"]["title"].strip()
+                surcharge = float(prices.get(cat, {}).get(title, 0))
+                variant_map[vid] = round(base + surcharge, 2)
 
         if variant_map:
             bulk_update(variant_map)
@@ -242,7 +214,7 @@ def worker():
         _log(f"💥 Worker crashed: {e}")
 
 
-# ─── ROUTES & SSE ─────────────────────────────────────
+# ─── ROUTES & SSE ────────────────────────────────────
 @app.get("/__ping")
 def ping():
     return "OK", 200
@@ -250,21 +222,21 @@ def ping():
 @app.route("/stream")
 def stream():
     def gen():
-        for l in list(log_buffer):
-            yield f"data:{l}\n\n"
+        for line in list(log_buffer):
+            yield f"data:{line}\n\n"
         while True:
             yield f"data:{_log_q.get()}\n\n"
     return Response(gen(), mimetype="text/event-stream")
 
-@app.route("/", methods=["GET", "POST"])
+@app.route("/", methods=["GET","POST"])
 def prices():
     data = load_prices()
     if request.method == "POST":
         for cat in data:
             for name in data[cat]:
-                f = f"{cat}_{name}"
-                if f in request.form:
-                    data[cat][name] = float(request.form[f])
+                key = f"{cat}_{name}"
+                if key in request.form:
+                    data[cat][name] = float(request.form[key])
         save_prices(data)
         flash("Surcharges saved ✔", "success")
     return render_template("prices.html", prices=data)
